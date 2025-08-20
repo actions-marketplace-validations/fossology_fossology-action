@@ -44,32 +44,39 @@ You can learn more about CI Scanners in fossology [here](https://github.com/foss
 ### User customizable inputs:
 ```yaml
 scan_mode:
-  description: "Specifies whether to perform diff scans, repo scans, or differential scans.
-    Leave blank for diff scans."
+  description: "Run the scan in one of the following modes: repo, differential, scan-only-deps, scan-dir"
   required: false
-  default: ""
+  default: "diff"
 scanners:
-  description: "Space-separated list of scanners to invoke."
-  required: true
+  description: "One of the scanner to invoke: nomos, copyright, keyword, ojo"
+  required: false
   default: "nomos ojo copyright keyword"
 report_format:
-  description: "Report format (SPDX_JSON,SPDX_RDF,SPDX_YAML,SPDX_TAG_VALUE) to print the results in."
+  description: "Report format to generate reports in: TEXT, SPDX_JSON, SPDX_YAML, SPDX_RDF, SPDX_TAG_VALUE"
   required: false
-  default: ""
+  default: "TEXT"
 keyword_conf_file_path:
-  description: "Path to custom keyword.conf file. (Use only with keyword scanner set to True)"
+  description: "Path to custom keyword.conf file"
   required: false
   default: ""
 allowlist_file_path:
-  description: "Path to allowlist.json file."
+  description: "Path to allowlist.json file"
   required: false
   default: ""
 from_tag:
-  description: "Starting tag to scan from. (Use only with differential mode)"
+  description: "If in differential mode, can provide a starting tag to scan from. Ex. v1"
   required: false
   default: ""
 to_tag:
-  description: "Ending tag to scan to. (Use only with differential mode)"
+  description: "If in differential mode, can provide an ending tag to scan to. Ex. v2"
+  required: false
+  default: ""
+sbom_path:
+  description: "If in scan-only-deps mode, path of of the SBOM file to scan."
+  required: false
+  default: "sbom.json"
+scan_dir:
+  description: "If in scan-dir mode, path of the directory to scan."
   required: false
   default: ""
 ```
@@ -119,7 +126,7 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-    
+
     - name: License check
       id: compliance
       uses: fossology/fossology-action@v1
@@ -130,7 +137,7 @@ jobs:
 
 ```
 
-### Tag scans 
+### Tag scans
 ```yaml
 name: License scan on tags
 
@@ -152,6 +159,79 @@ jobs:
         from_tag: 'v003'
         to_tag: 'v004'
         report_format: 'SPDX_JSON'
+```
+
+### Dependency Scans
+```yaml
+name: Software Composition Analysis
+
+on:
+  push:
+    paths:
+      - pyproject.toml
+      - poetry.lock
+  schedule:
+    - cron: '0 0 * * 0'  # Midnight, Sunday
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install CDX Python
+        run: python3 -m pip install cyclonedx-bom
+
+      - name: Generate CDX SBOM
+        run: python3 -m cyclonedx_py poetry --spec-version 1.6 --output-format JSON --output-file sbom.json --validate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          if-no-files-found: error
+
+  sca:
+    runs-on: ubuntu-latest
+    needs: sbom
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+
+      - name: Run FOSSology analysis
+        id: fossology
+        uses: fossology/fossology-action@v1
+        with:
+          scan_mode: "scan-only-deps"
+          scanners: |
+            - nomos
+            - ojo
+            - copyright
+          report_format: "SPDX_JSON"
+          sbom_path: "sbom.json"
+
+      - name: Upload Scan Results Artifact
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fossology scan results
+          path: results/
 ```
 
 ## License
